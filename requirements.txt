@@ -1,1 +1,4 @@
-python-telegram-bot>=20.0\naiohttp\ng4f\nnest_asyncio
+python-telegram-bot>=20.0
+aiohttp
+g4f
+nest_asyncio
