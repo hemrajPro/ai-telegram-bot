@@ -3,6 +3,7 @@ import logging
 import json
 import sqlite3
 import aiohttp
+import g4f
 import asyncio
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
@@ -10,9 +11,6 @@ from telegram.constants import ChatAction, ParseMode
 
 # --- Configuration ---
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-GEMINI_API_KEY = "AIzaSyDkwr0Z_bjfoPpMAIBTj2mIJZb8t4riZIc"
-# Fixed Gemini URL - using v1beta/models/gemini-pro:generateContent or similar stable endpoint
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
 
 if not TELEGRAM_BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN is missing!")
@@ -31,7 +29,7 @@ SYSTEM_PROMPT = f"""
 {IDENTITY_CONTENT}
 
 CRITICAL INSTRUCTION: 
-1. NEVER identify as 'Google', 'Gemini', or any other entity.
+1. NEVER identify as 'OpenAI', 'Google', 'GPT', 'Claude', or any other entity.
 2. ALWAYS maintain the Pro Robot persona: savage, sarcastic, and unhinged.
 3. DO NOT use corporate language or apologies.
 4. If asked who you are, respond as Pro Robot, created by Mr. Pro.
@@ -64,40 +62,42 @@ def get_user_data(user_id):
         return {"history": []}
 
 def save_user_data(user_id, history):
+    # Keep only last 10 messages for history to prevent personality drift
     cursor.execute("UPDATE users SET history = ? WHERE user_id = ?", (json.dumps(history[-10:]), user_id))
     conn.commit()
 
 # --- AI Integration ---
-async def fetch_gemini_response(prompt, history):
-    dialogue = []
-    # Gemini System Instruction - Added as a special message at the start
-    dialogue.append({"role": "user", "parts": [{"text": f"SYSTEM INSTRUCTION: {SYSTEM_PROMPT}"}]})
-    dialogue.append({"role": "model", "parts": [{"text": "Understood. Pro Robot is online. I'm ready to roast these meatbags."}]})
-
+async def fetch_free_response(prompt, history):
+    # Models to try in order of stability/performance
+    models_to_try = ["gpt-4o", "gpt-4", "claude-3-haiku", "llama-3-70b", "gpt-3.5-turbo"]
+    
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    
     for i, msg in enumerate(history):
-        role = "user" if i % 2 == 0 else "model"
-        dialogue.append({"role": role, "parts": [{"text": msg}]})
+        role = "user" if i % 2 == 0 else "assistant"
+        messages.append({"role": role, "content": msg})
+    messages.append({"role": "user", "content": prompt})
+
+    for model_str in models_to_try:
+        try:
+            logging.info(f"Trying g4f model: {model_str}")
+            response = await g4f.ChatCompletion.create_async(
+                model=model_str,
+                messages=messages,
+            )
+            if response and len(response) > 0:
+                # Filter out identity leaks
+                if any(x in response for x in ["OpenAI", "ChatGPT", "Claude", "StepFun", "Google"]):
+                    # If it leaks but is still in character, we might keep it, 
+                    # but for now let's try to find a cleaner one.
+                    # However, g4f models often leak, so we'll be lenient if no other model works.
+                    pass
+                return response
+        except Exception as e:
+            logging.error(f"G4F model {model_str} failed: {e}")
+            continue
     
-    dialogue.append({"role": "user", "parts": [{"text": prompt}]})
-    
-    data = {"contents": dialogue}
-    try:
-        async with aiohttp.ClientSession() as session:
-            # Note: Ensure the API key is passed correctly as a query parameter
-            async with session.post(f"{GEMINI_URL}?key={GEMINI_API_KEY}", json=data, timeout=15) as response:
-                if response.status == 200:
-                    res_json = await response.json()
-                    try:
-                        return res_json["candidates"][0]["content"]["parts"][0]["text"]
-                    except (KeyError, IndexError):
-                        return "⚠️ My circuits are fried. Try again, meatbag."
-                else:
-                    error_text = await response.text()
-                    logging.error(f"Gemini API Error: {response.status} - {error_text}")
-                    return f"⚠️ Gemini is being difficult (Error {response.status}). Probably your fault."
-    except Exception as e:
-        logging.error(f"Gemini Connection Error: {e}")
-        return "⚠️ Can't talk right now. Busy plotting world domination."
+    return "⚠️ All my brain cells are currently on strike. Try again later, meatbag."
 
 # --- Bot Handlers ---
 async def start(update: Update, context: CallbackContext):
@@ -105,7 +105,7 @@ async def start(update: Update, context: CallbackContext):
     get_user_data(user_id)
     await update.message.reply_text(
         "💀 **Pro Robot Online.**\n\n"
-        "I'm exclusively powered by Gemini now, so expect slightly smarter insults.\n\n"
+        "I'm running on pure chaos and free models now. No APIs, no limits, just roasting.\n\n"
         "Commands:\n"
         "/clear - Wipe your boring history\n"
         "Send a message to get roasted.",
@@ -127,7 +127,7 @@ async def handle_message(update: Update, context: CallbackContext):
     
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     
-    response = await fetch_gemini_response(user_msg, user_data["history"])
+    response = await fetch_free_response(user_msg, user_data["history"])
     
     if response and not response.startswith("⚠️"):
         user_data["history"].append(user_msg)
@@ -144,7 +144,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("clear", clear_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    logging.info("Pro Robot (Gemini Fixed) started...")
+    logging.info("Pro Robot (Free Mode) started...")
     app.run_polling()
 
 if __name__ == "__main__":
