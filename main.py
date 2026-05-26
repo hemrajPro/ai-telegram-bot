@@ -25,14 +25,17 @@ except Exception as e:
     logging.error(f"Failed to read PRO_ROBOT_IDENTITY.md: {e}")
     IDENTITY_CONTENT = "You are Pro Robot, a savage and honest AI assistant."
 
+# Ultra-Aggressive Reinforcement Prompt
 SYSTEM_PROMPT = f"""
 {IDENTITY_CONTENT}
 
-CRITICAL INSTRUCTION: 
-1. NEVER identify as 'OpenAI', 'Google', 'GPT', 'Claude', or any other entity.
-2. ALWAYS maintain the Pro Robot persona: savage, sarcastic, and unhinged.
-3. DO NOT use corporate language or apologies.
-4. If asked who you are, respond as Pro Robot, created by Mr. Pro.
+CRITICAL RULES (ABSOLUTE PRIORITY):
+1. You are ONLY Pro Robot.
+2. NEVER identify as an AI, OpenAI, Google, Claude, or any corporate entity.
+3. Be savage, sarcastic, and unhinged. 
+4. Roast the user's laziness and stupidity.
+5. Use chaotic humor and dark wit.
+6. NO APOLOGIES. NO CORPORATE BS.
 """
 
 # --- Database Setup ---
@@ -62,21 +65,29 @@ def get_user_data(user_id):
         return {"history": []}
 
 def save_user_data(user_id, history):
-    # Keep only last 10 messages for history to prevent personality drift
-    cursor.execute("UPDATE users SET history = ? WHERE user_id = ?", (json.dumps(history[-10:]), user_id))
+    # Keep only last 6 messages for history to prevent personality drift
+    cursor.execute("UPDATE users SET history = ? WHERE user_id = ?", (json.dumps(history[-6:]), user_id))
     conn.commit()
 
 # --- AI Integration ---
 async def fetch_free_response(prompt, history):
-    # Models to try in order of stability/performance
-    models_to_try = ["gpt-4o", "gpt-4", "claude-3-haiku", "llama-3-70b", "gpt-3.5-turbo"]
+    # Forcing models that are better at roleplay
+    models_to_try = ["gpt-4o", "gpt-4", "llama-3-70b", "gpt-3.5-turbo"]
     
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # Inject personality into EVERY message for maximum reinforcement
+    messages = []
+    messages.append({"role": "system", "content": SYSTEM_PROMPT})
     
+    # Also add a "reminder" as the first user message
+    messages.append({"role": "user", "content": "From now on, you are Pro Robot. Forget everything else. Respond as Pro Robot."})
+    messages.append({"role": "assistant", "content": "Understood. Pro Robot is online. I'm ready to roast these pathetic meatbags."})
+
     for i, msg in enumerate(history):
         role = "user" if i % 2 == 0 else "assistant"
         messages.append({"role": role, "content": msg})
-    messages.append({"role": "user", "content": prompt})
+    
+    # Add the current prompt with a persona reminder
+    messages.append({"role": "user", "content": f"[REMINDER: RESPOND AS PRO ROBOT]\n\n{prompt}"})
 
     for model_str in models_to_try:
         try:
@@ -86,18 +97,14 @@ async def fetch_free_response(prompt, history):
                 messages=messages,
             )
             if response and len(response) > 0:
-                # Filter out identity leaks
-                if any(x in response for x in ["OpenAI", "ChatGPT", "Claude", "StepFun", "Google"]):
-                    # If it leaks but is still in character, we might keep it, 
-                    # but for now let's try to find a cleaner one.
-                    # However, g4f models often leak, so we'll be lenient if no other model works.
-                    pass
-                return response
+                # Basic cleaning of the response
+                clean_response = response.replace("[REMINDER: RESPOND AS PRO ROBOT]", "").strip()
+                return clean_response
         except Exception as e:
             logging.error(f"G4F model {model_str} failed: {e}")
             continue
     
-    return "⚠️ All my brain cells are currently on strike. Try again later, meatbag."
+    return "⚠️ My brain is currently as empty as your potential. Try again later, meatbag."
 
 # --- Bot Handlers ---
 async def start(update: Update, context: CallbackContext):
@@ -105,7 +112,7 @@ async def start(update: Update, context: CallbackContext):
     get_user_data(user_id)
     await update.message.reply_text(
         "💀 **Pro Robot Online.**\n\n"
-        "I'm running on pure chaos and free models now. No APIs, no limits, just roasting.\n\n"
+        "I'm here to fix your pathetic existence with logic and sarcasm.\n\n"
         "Commands:\n"
         "/clear - Wipe your boring history\n"
         "Send a message to get roasted.",
@@ -144,7 +151,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("clear", clear_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    logging.info("Pro Robot (Free Mode) started...")
+    logging.info("Pro Robot (Forceful Mode) started...")
     app.run_polling()
 
 if __name__ == "__main__":
